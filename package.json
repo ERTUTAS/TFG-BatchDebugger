@@ -7,15 +7,71 @@
     "vscode": "^1.138.0"
   },
   "categories": [
+    "Debuggers",
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [ "onDebug"],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "batch-debugger.helloWorld",
         "title": "Hello World"
+      }
+    ],
+    "languages": [
+      {
+        "id": "batch",
+        "extensions": [".bat", ".cmd"],
+        "aliases": ["Batch", "BAT"]
+      }
+    ],
+    "breakpoints": [
+      {
+        "language": "batch"
+      }
+    ],
+
+    "debuggers": [
+      {
+        "type": "bat",
+        "languages": ["batch"],
+        "label": "BATCH Debug",
+        "program": "./out/batchDebug.js",
+        "runtime": "node",
+
+        "configurationAttributes": {
+          "launch": {
+            "required": ["program"],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Ruta absoluta al script .bat",
+                "default": "${file}"
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "default": true
+              },
+              "trace": {
+                "type": "boolean",
+                "default": true
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "bat",
+            "request": "launch",
+            "name": "Debug BATCH",
+            "program": "${file}",
+            "stopOnEntry": true
+          }
+        ],
+        "variables": {
+          "AskForProgramName": "extension.bat-debug.getProgramName"
+        }
       }
     ]
   },
@@ -35,7 +91,12 @@
     "eslint": "^10.5.0",
     "typescript": "^6.0.3",
     "@vscode/test-cli": "^0.0.15",
-    "@vscode/test-electron": "^3.0.0"
+    "@vscode/test-electron": "^3.0.0",   
+    "@vscode/debugadapter": "^1.56.0",
+    "@vscode/debugadapter-testsupport": "^1.56.0",
+    "await-notify": "^1.0.1",
+    "path-browserify": "^1.0.1",
+    "base64-js": "^1.5.1"
   },
   "overrides": {
     "diff": "^8.0.4",

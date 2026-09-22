@@ -17,5 +17,16 @@
         // "noImplicitReturns": true, /* Report error when not all code paths in function return a value. */
         // "noFallthroughCasesInSwitch": true, /* Report errors for fallthrough cases in switch statement. */
         // "noUnusedParameters": true,  /* Report errors on unused parameters. */
-    }
+		"noImplicitAny": false,
+		"removeComments": false,
+		"noUnusedLocals": true,
+		"noImplicitThis": true,
+		"inlineSourceMap": false,
+		"preserveConstEnums": true,
+		"strictNullChecks": true,
+		"noUnusedParameters": false
+	},
+	"exclude": [
+		"node_modules"
+	]
 }

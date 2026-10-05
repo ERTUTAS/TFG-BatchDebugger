@@ -89,7 +89,7 @@ export function timeout(ms: number) {
 }
 
 /*
-Este es un entorno de ejecución simulado para el 
+Este es un entorno de ejecución para el 
 depurador de Batch. Se ejecuta en un subproceso separado y se 
 comunica con el depurador a través de eventos.
 */
@@ -102,6 +102,7 @@ export class BatchRuntime extends EventEmitter {
 	}
 
 	private variables = new Map<string, RuntimeVariable>();
+	private batchVariableNames = new Set<string>();
 
 	// El contenido (las líneas) del archivo.
 	private sourceLines: string[] = [];
@@ -151,7 +152,7 @@ export class BatchRuntime extends EventEmitter {
 	private outputQueue: string[] = [];
 	private isPaused = false;
 	private isProcessExited = false;
-
+	
 	constructor(private fileAccessor: FileAccessor) {
 		super();
 	}
@@ -168,7 +169,7 @@ export class BatchRuntime extends EventEmitter {
 		this.isStepping = false;
 
 		// Lanzamos el cmd.exe y que ejecute el archivo instrumentado
-		this.instrumentedPath = instrumentBatch(program);
+		this.instrumentedPath = await instrumentBatch(program);
 		this.cmdProcess = spawn("cmd.exe", ["/C", this.instrumentedPath]);
 		
 		// Escuchamos la salida estándar del CMD
@@ -177,7 +178,7 @@ export class BatchRuntime extends EventEmitter {
 		});
 
 		this.cmdProcess.stderr?.on('data', (data) => {
-			this.sendEvent('output', data.toString(), this._sourceFile, this.currentLine);
+			this.sendEvent('output','err', data.toString(), this._sourceFile, this.currentLine);
 		});
 
 		this.cmdProcess.on('close', () => {
@@ -215,7 +216,6 @@ export class BatchRuntime extends EventEmitter {
 	 Procesar la cola de salida.
 	*/
 	private processQueue() {
-		// Si estamos en un breakpoint o pausados, no leemos más datos
 		if (this.isPaused) {
 			return;
 		}
@@ -224,44 +224,91 @@ export class BatchRuntime extends EventEmitter {
 			const line = this.outputQueue.shift()!;
 			const trimmed = line.trim();
 
-			if (trimmed.includes('__TRACE__LINE:')) {
-				const rawLine = parseInt(trimmed.substring('__TRACE__LINE:'.length), 10);
+			if (trimmed.includes('__BATCH_DEBUG_VAR__:')) {
+				const variableName = trimmed.substring('__BATCH_DEBUG_VAR__:'.length).trim();
+				
+				if (variableName.length > 0) {
+					this.batchVariableNames.add(variableName.toLowerCase());
+				}
+
+			} else if (trimmed.includes('__TRACE__LINE:')) {
+				const rawLine = parseInt(trimmed.substring('__TRACE__LINE:'.length),10);
+				
+				let stopReason: 'entry' | 'breakpoint' | 'step' | undefined;
+
 				if (!isNaN(rawLine)) {
-					// Convertir índice de línea del instrumentador (base 1) a base 0 del entorno
 					this.currentLine = Math.max(0, rawLine - 1);
 
 					if (this.stopOnEntryRequested) {
 						this.stopOnEntryRequested = false;
+						stopReason = 'entry';
+
+					} else {
+						const bps = this.breakPoints.get(this._sourceFile);
+
+						if (bps && bps.some(bp => bp.line === this.currentLine)) {
+							stopReason = 'breakpoint';
+
+						} else if (this.isStepping) {
+							this.isStepping = false;
+							stopReason = 'step';
+						}
+					}
+					if (stopReason) {
 						this.isPaused = true;
-						this.sendEvent('stopOnEntry');
+
+						if (stopReason === 'entry') {
+							this.sendEvent('stopOnEntry');
+						} else if (stopReason === 'breakpoint') {
+							this.sendEvent('stopOnBreakpoint');
+						} else if (stopReason === 'step') {
+							this.sendEvent('stopOnStep');
+						}
+
 						return;
 					}
-
-					// Validar si existe un breakpoint en la línea actual
-					const bps = this.breakPoints.get(this._sourceFile);
-					if (bps && bps.some(bp => bp.line === this.currentLine)) {
-						this.isPaused = true;
-						this.sendEvent('stopOnBreakpoint');
-						return;
-					}
-
-					// Detener si estamos haciendo Step / Avanzando paso a paso
-					if (this.isStepping) {
-						this.isStepping = false;
-						this.isPaused = true;
-						this.sendEvent('stopOnStep');
-						return;
+				    else {
+						if (this.cmdProcess?.stdin?.writable) {
+							this.cmdProcess.stdin.write('\r');
+						}
 					}
 				}
+
+			} else if (trimmed.includes('__VARS_START__')) {
+				this.isCollectingVariables = true;
+				this.stdoutBuffer = '';
+
+			} else if (trimmed.includes('__VARS_END__')) {
+				this.isCollectingVariables = false;
+
+				const variables = this.stdoutBuffer.split(/\r?\n/).filter(variableLine => variableLine.includes('='));
+
+				for (const variableLine of variables) {
+					const separator = variableLine.indexOf('=');
+
+					if (separator > 0) {
+						const name = variableLine.substring(0, separator);
+						const value = variableLine.substring(separator + 1);
+						const lowerName = name.toLowerCase();
+
+						if (this.batchVariableNames.has(lowerName)) {
+							this.variables.set(name, new RuntimeVariable(name, value));
+						}
+					}
+				}
+
+				this.stdoutBuffer = '';
+
+			} else if (this.isCollectingVariables) {
+				this.stdoutBuffer += line + '\n';
+
 			} else {
-				// Es texto impreso del script, redirigir a Debug Console
 				if (line.length > 0) {
 					this.sendEvent('output', 'out', line + '\n', this._sourceFile, this.currentLine, 0);
 				}
 			}
 		}
 
-		// Si el script ya ha finalizado su ejecución y vaciamos la cola
 		if (this.isProcessExited && this.outputQueue.length === 0) {
 			this.cleanupTempFile();
 			this.sendEvent('end');
@@ -287,7 +334,10 @@ export class BatchRuntime extends EventEmitter {
 	 */
 	public continue() {
     	this.isStepping = false;
-		this.isPaused = false;
+		if (this.isPaused && this.cmdProcess?.stdin?.writable) {
+			this.isPaused = false;
+			this.cmdProcess.stdin.write('\r');
+		}
 		this.processQueue();
 	}
 
@@ -295,10 +345,16 @@ export class BatchRuntime extends EventEmitter {
 	 * Avanzar hasta la siguiente línea no vacía.
 	 */
 	public step() {
-		this.isStepping = true;
-		this.isPaused = false;
-		this.processQueue();
+
+    this.isStepping = true;
+
+    if (this.isPaused && this.cmdProcess?.stdin?.writable) {
+        this.isPaused = false;
+		this.cmdProcess.stdin.write('\r');
 	}
+
+    this.processQueue();
+}
 
 	/*
 	 * Avanzar dentro de una llamada a call.
@@ -449,7 +505,7 @@ export class BatchRuntime extends EventEmitter {
 	public async getGlobalVariables(cancellationToken?: () => boolean ): Promise<RuntimeVariable[]> {
 
 		let a: RuntimeVariable[] = [];
-
+		
 		for (let i = 0; i < 10; i++) {
 			a.push(new RuntimeVariable(`global_${i}`, i));
 			if (cancellationToken && cancellationToken()) {
@@ -468,6 +524,8 @@ export class BatchRuntime extends EventEmitter {
 	public getLocalVariable(name: string): RuntimeVariable | undefined {
 		return this.variables.get(name);
 	}
+
+
 
 	/**
 	 * Devolver las palabras del rango de direcciones indicado como "instrucciones".

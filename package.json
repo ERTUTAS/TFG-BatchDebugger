@@ -10,20 +10,33 @@
     "Debuggers",
     "Other"
   ],
-  "activationEvents": [ "onDebug"],
+  "activationEvents": [
+    "onDebugResolve:bat",
+    "onDebugInitialConfigurations"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "batch-debugger.helloWorld",
         "title": "Hello World"
+      },
+      {
+        "command": "batch-debugger.getProgramName",
+        "title": "Get Program Name"
       }
     ],
     "languages": [
       {
         "id": "batch",
-        "extensions": [".bat", ".cmd"],
-        "aliases": ["Batch", "BAT"]
+        "extensions": [
+          ".bat",
+          ".cmd"
+        ],
+        "aliases": [
+          "Batch",
+          "BAT"
+        ]
       }
     ],
     "breakpoints": [
@@ -31,18 +44,20 @@
         "language": "batch"
       }
     ],
-
     "debuggers": [
       {
         "type": "bat",
-        "languages": ["batch"],
+        "languages": [
+          "batch"
+        ],
         "label": "BATCH Debug",
         "program": "./out/batchDebug.js",
         "runtime": "node",
-
         "configurationAttributes": {
           "launch": {
-            "required": ["program"],
+            "required": [
+              "program"
+            ],
             "properties": {
               "program": {
                 "type": "string",
@@ -70,7 +85,7 @@
           }
         ],
         "variables": {
-          "AskForProgramName": "extension.bat-debug.getProgramName"
+          "AskForProgramName": "batch-debugger.getProgramName"
         }
       }
     ]
@@ -84,22 +99,26 @@
     "test": "vscode-test"
   },
   "devDependencies": {
-    "@types/vscode": "^1.138.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "24.x",
-    "typescript-eslint": "^8.61.1",
-    "eslint": "^10.5.0",
-    "typescript": "^6.0.3",
-    "@vscode/test-cli": "^0.0.15",
-    "@vscode/test-electron": "^3.0.0",   
+    "@types/vscode": "^1.138.0",
     "@vscode/debugadapter": "^1.56.0",
     "@vscode/debugadapter-testsupport": "^1.56.0",
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^3.0.0",
     "await-notify": "^1.0.1",
+    "base64-js": "^1.5.1",
+    "eslint": "^10.5.0",
     "path-browserify": "^1.0.1",
-    "base64-js": "^1.5.1"
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.61.1"
   },
   "overrides": {
     "diff": "^8.0.4",
     "serialize-javascript": "^7.0.6"
+  },
+  "dependencies": {
+    "tree-sitter": "^0.25.1",
+    "tree-sitter-batch": "^0.11.1"
   }
 }

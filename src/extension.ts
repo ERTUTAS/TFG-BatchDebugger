@@ -15,24 +15,28 @@ export function activate(context: vscode.ExtensionContext) {
 	// The command has been defined in the package.json file
 	// Now provide the implementation of the command with registerCommand
 	// The commandId parameter must match the command field in package.json
-	const disposable = vscode.commands.registerCommand('batch-debugger.helloWorld', () => {
+	const helloWorldDisposable = vscode.commands.registerCommand('batch-debugger.helloWorld', () => {
 		// The code you place here will be executed every time your command is executed
 		// Display a message box to the user
 		vscode.window.showInformationMessage('Hello World from Batch Debugger!');
 	});
-
+	const getProgramNameDisposable = vscode.commands.registerCommand('batch-debugger.getProgramName', config => {
+        return vscode.window.showInputBox({
+            placeHolder: 'Ingresa la ruta o el nombre del archivo .bat a depurar',
+            value: 'script.bat'
+        });
+    });
+	context.subscriptions.push(helloWorldDisposable);
+    context.subscriptions.push(getProgramNameDisposable);
+	
 	// Registrar el proveedor de configuración para el tipo "batch"
 	const provider = new BatchConfigurationProvider();
-	context.subscriptions.push(
-		vscode.debug.registerDebugConfigurationProvider('bat', provider)
-	);
+	context.subscriptions.push(vscode.debug.registerDebugConfigurationProvider('bat', provider));
+	
 	//Registrar la fábrica para instanciar el adaptador de depuración
 	const factory = new InlineDebugAdapterFactory();
-	const factoryRegistration =
-    vscode.debug.registerDebugAdapterDescriptorFactory('bat', factory);
-
+	const factoryRegistration = vscode.debug.registerDebugAdapterDescriptorFactory('bat', factory);
 	context.subscriptions.push(factoryRegistration);
-	context.subscriptions.push(disposable);
 }
 
 // This method is called when your extension is deactivated

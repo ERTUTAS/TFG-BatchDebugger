@@ -30,6 +30,11 @@ const INSTRUMENTABLE_NODES = new Set([
     'cmd'
 ]);
 
+export const DEBUG_VAR: string = '__BATCH_DEBUG_VAR__';
+export const TRACE_LINE: string = '__TRACE_LINE__';
+export const VARS_START: string = '__VARS_START__';
+export const VARS_END: string = '__VARS_END__';
+
 /*
 Evita que TypeScript convierta import() en require()
 cuando el proyecto se compila como CommonJS.
@@ -69,7 +74,7 @@ export async function instrumentBatch(path: string): Promise<string> {
     // Hace un echo de todas las variables detectadas en el script completo al inicio
     if (batchVariableNames.size > 0 ) {
         for (const variableName of batchVariableNames) {
-            out.push(`echo __BATCH_DEBUG_VAR__:${variableName}`);
+            out.push(`@echo ${DEBUG_VAR}:${variableName}`);
         }
     }
 
@@ -77,7 +82,7 @@ export async function instrumentBatch(path: string): Promise<string> {
         // Si nos encontramos una linea hacemos echo para indicar el numero de linea
         // y hacemos un pause para que el runtime pueda usar breakpoints
         if (linesToInstrument.has(i)) {
-            out.push(`echo __TRACE__LINE:${i + 1}`);
+            out.push(`@echo ${TRACE_LINE}:${i + 1}`);
             out.push('@pause >nul');
         }
 
@@ -87,9 +92,9 @@ export async function instrumentBatch(path: string): Promise<string> {
         // que muestra todas las variables para controlar si alguna de las declaradas ha
         // cambiado valor y así poder añadirla en el map de depuradores en el runtime
         if (linesToInstrument.has(i)) {
-            out.push('echo __VARS_START__');
-            out.push('set');
-            out.push('echo __VARS_END__');
+            out.push(`@echo ${VARS_START}`);
+            out.push('@set');
+            out.push(`@echo ${VARS_END}`);
         }
     }
 

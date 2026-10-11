@@ -1,7 +1,9 @@
 
 import { EventEmitter } from 'events';
 import { spawn, ChildProcess } from 'child_process';
-import { instrumentBatch } from './batchInstrumenter';
+import { instrumentBatch,
+		 DEBUG_VAR, TRACE_LINE,
+		 VARS_START, VARS_END } from './batchInstrumenter';
 import * as fs from 'fs';
 
 export interface FileAccessor {
@@ -212,7 +214,7 @@ export class BatchRuntime extends EventEmitter {
 		this.processQueue();
 	}
 
-	/*	
+	/*
 	 Procesar la cola de salida.
 	*/
 	private processQueue() {
@@ -224,94 +226,150 @@ export class BatchRuntime extends EventEmitter {
 			const line = this.outputQueue.shift()!;
 			const trimmed = line.trim();
 
-			if (trimmed.includes('__BATCH_DEBUG_VAR__:')) {
-				const variableName = trimmed.substring('__BATCH_DEBUG_VAR__:'.length).trim();
-				
-				if (variableName.length > 0) {
-					this.batchVariableNames.add(variableName.toLowerCase());
-				}
+			const prefix = trimmed.split(':')[0];
 
-			} else if (trimmed.includes('__TRACE__LINE:')) {
-				const rawLine = parseInt(trimmed.substring('__TRACE__LINE:'.length),10);
-				
-				let stopReason: 'entry' | 'breakpoint' | 'step' | undefined;
-
-				if (!isNaN(rawLine)) {
-					this.currentLine = Math.max(0, rawLine - 1);
-
-					if (this.stopOnEntryRequested) {
-						this.stopOnEntryRequested = false;
-						stopReason = 'entry';
-
-					} else {
-						const bps = this.breakPoints.get(this._sourceFile);
-
-						if (bps && bps.some(bp => bp.line === this.currentLine)) {
-							stopReason = 'breakpoint';
-
-						} else if (this.isStepping) {
-							this.isStepping = false;
-							stopReason = 'step';
-						}
-					}
-					if (stopReason) {
-						this.isPaused = true;
-
-						if (stopReason === 'entry') {
-							this.sendEvent('stopOnEntry');
-						} else if (stopReason === 'breakpoint') {
-							this.sendEvent('stopOnBreakpoint');
-						} else if (stopReason === 'step') {
-							this.sendEvent('stopOnStep');
-						}
-
+			switch (prefix) {
+				case DEBUG_VAR:
+					this.handleDebugVariable(trimmed);
+					break;
+				case TRACE_LINE:
+					// Si tenemos que detener la ejecución, salimos de processQueue
+					const shouldPause = this.handleTraceLine(trimmed);
+					if (shouldPause) {
 						return;
 					}
-				    else {
-						if (this.cmdProcess?.stdin?.writable) {
-							this.cmdProcess.stdin.write('\r');
-						}
-					}
-				}
-
-			} else if (trimmed.includes('__VARS_START__')) {
-				this.isCollectingVariables = true;
-				this.stdoutBuffer = '';
-
-			} else if (trimmed.includes('__VARS_END__')) {
-				this.isCollectingVariables = false;
-
-				const variables = this.stdoutBuffer.split(/\r?\n/).filter(variableLine => variableLine.includes('='));
-
-				for (const variableLine of variables) {
-					const separator = variableLine.indexOf('=');
-
-					if (separator > 0) {
-						const name = variableLine.substring(0, separator);
-						const value = variableLine.substring(separator + 1);
-						const lowerName = name.toLowerCase();
-
-						if (this.batchVariableNames.has(lowerName)) {
-							this.variables.set(name, new RuntimeVariable(name, value));
-						}
-					}
-				}
-
-				this.stdoutBuffer = '';
-
-			} else if (this.isCollectingVariables) {
-				this.stdoutBuffer += line + '\n';
-
-			} else {
-				if (line.length > 0) {
-					this.sendEvent('output', 'out', line + '\n', this._sourceFile, this.currentLine, 0);
-				}
+					break;
+				case VARS_START:
+					// Empieza la muestra de variables, activamos el flag para que las
+					// siguientes líneas se acumulen en stdoutBuffer
+					this.isCollectingVariables = true;
+					this.stdoutBuffer = '';
+					break;
+				case VARS_END:
+					this.handleVarsEnd();
+					break;
+				default:
+					this.handleDefaultOutput(line);
 			}
 		}
 
 		if (this.isProcessExited && this.outputQueue.length === 0) {
 			this.cleanupTempFile();
 			this.sendEvent('end');
+		}
+	}
+
+	/**
+	 * Extrae el nombre de la variable de depuración de la línea y lo añade al conjunto de
+	 * nombres de variables batchVariableNames.
+	 *
+	 * @param line Linea de salida que contiene la variable de depuración.
+	 */
+	private handleDebugVariable(line: string): void {
+		const variableName = line.substring(`${DEBUG_VAR}:`.length).trim();
+
+		if (variableName.length > 0) {
+			this.batchVariableNames.add(variableName.toLowerCase());
+		}
+	}
+
+	/**
+	 * Maneja una línea que contiene el número de línea real del script batch.
+	 *
+	 * @param line Linea de salida que contiene el número de línea real del script batch.
+	 * @returns True si la ejecución se detuvo y False si la ejecución continúa.
+	 */
+	private handleTraceLine(line: string): boolean {
+		const lineNum = parseInt(line.substring(`${TRACE_LINE}:`.length),10);
+
+		let stopReason: 'entry' | 'breakpoint' | 'step' | undefined;
+
+		if (isNaN(lineNum)) {
+			return false;
+		}
+
+		this.currentLine = Math.max(0, lineNum - 1);
+
+		if (this.stopOnEntryRequested) {
+			this.stopOnEntryRequested = false;
+			stopReason = 'entry';
+
+		} else {
+			const bps = this.breakPoints.get(this._sourceFile);
+
+			// Comprobar si hay un breakpoint en la línea actual o si estamos en modo paso a paso
+			if (bps && bps.some(bp => bp.line === this.currentLine)) {
+				stopReason = 'breakpoint';
+
+			} else if (this.isStepping) {
+				this.isStepping = false;
+				stopReason = 'step';
+			}
+		}
+
+		if (stopReason) {
+			this.isPaused = true;
+
+			if (stopReason === 'entry') {
+				this.sendEvent('stopOnEntry');
+			} else if (stopReason === 'breakpoint') {
+				this.sendEvent('stopOnBreakpoint');
+			} else if (stopReason === 'step') {
+				this.sendEvent('stopOnStep');
+			}
+
+			return true;
+		}
+		else {
+			// Simula la continuación de la ejecución enviando un retorno de carro
+			if (this.cmdProcess?.stdin?.writable) {
+				this.cmdProcess.stdin.write('\r');
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Maneja el final de la sección de variables, procesando las variables capturadas y actualizando el mapa de variables.
+	 */
+	private handleVarsEnd(): void {
+		this.isCollectingVariables = false;
+
+		const variables = this.stdoutBuffer.split(/\r?\n/).filter(variableLine => variableLine.includes('='));
+
+		// Recorremos todas las lineas que contienen variables
+		for (const variableLine of variables) {
+			const separator = variableLine.indexOf('=');
+
+			if (separator > 0) {
+				const name = variableLine.substring(0, separator);
+				const value = variableLine.substring(separator + 1);
+				const lowerName = name.toLowerCase();
+
+				// Solo cambiamos o añadimos el valor de la variable si es una de las variables
+				// que hemos marcado para depuración al principio del script
+				if (this.batchVariableNames.has(lowerName)) {
+					this.variables.set(name, new RuntimeVariable(name, value));
+				}
+			}
+		}
+
+		this.stdoutBuffer = '';
+	}
+
+	/**
+	 * Maneja la salida por defecto del proceso CMD.
+	 * @param line Línea de salida del proceso CMD.
+	 */
+	private handleDefaultOutput(line: string): void {
+		// Si estamos mirando la salida del comando set, guardamos en el buffer
+		if (this.isCollectingVariables) {
+			this.stdoutBuffer += line + '\n';
+		}
+		// En caso contrario enviamos el evento para mostrar por consola lo que vería el usuario
+		else if (line.length > 0) {
+			this.sendEvent('output', 'out', line + '\n', this._sourceFile, this.currentLine, 0);
 		}
 	}
 
@@ -345,16 +403,15 @@ export class BatchRuntime extends EventEmitter {
 	 * Avanzar hasta la siguiente línea no vacía.
 	 */
 	public step() {
+    	this.isStepping = true;
 
-    this.isStepping = true;
+    	if (this.isPaused && this.cmdProcess?.stdin?.writable) {
+        	this.isPaused = false;
+			this.cmdProcess.stdin.write('\r');
+		}
 
-    if (this.isPaused && this.cmdProcess?.stdin?.writable) {
-        this.isPaused = false;
-		this.cmdProcess.stdin.write('\r');
+    	this.processQueue();
 	}
-
-    this.processQueue();
-}
 
 	/*
 	 * Avanzar dentro de una llamada a call.
